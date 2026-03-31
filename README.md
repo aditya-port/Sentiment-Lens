@@ -4,7 +4,7 @@ Universal Google Maps & Reviews Sentiment Analyzer — analyze any place, not ju
 
 Hotels, shops, museums, hospitals, gyms, airports — if it's on Google Maps, Sentiment Lens analyzes it.
 
----
+----
 
 ## Features
 
