@@ -1,138 +1,224 @@
 # 🔍 Sentiment Lens
 
-Universal Google Maps & Reviews Sentiment Analyzer — analyze any place, not just restaurants.
+**AI-powered review analytics for any Google Maps place — restaurants, hotels, hospitals, shops, and more.**
 
-Hotels, shops, museums, hospitals, gyms, airports — if it's on Google Maps, Sentiment Lens analyzes it.
+Paste a place name → get sentiment scores, topic clusters, fake review detection, trend analysis, and an AI chat assistant — all in seconds.
 
-<<<<<<< HEAD
----
-=======
-----
->>>>>>> 8f326ff51dacd551abe6f702ae7564b19cf4b6e8
-
-## Features
-
-| # | Feature | Description |
-|---|---------|-------------|
-| 1 | **Universal place search** | Any Google Maps place type via SerpApi |
-| 2 | **VADER sentiment scoring** | Compound score [-1, +1] per review, O(1) speed |
-| 3 | **Sentiment velocity** | 30-day vs prior 30-day % change with trend signal |
-| 4 | **K-Means topic clustering** | Auto-groups reviews into themes — no predefined categories |
-| 5 | **Authenticity detection** | Heuristic suspicion scoring; flags potentially fake/paid reviews |
-| 6 | **Aspect-based analysis** | 6 universal aspects: Quality, Service, Value, Location, Cleanliness, Wait Time |
-| 7 | **Multi-place comparison** | Side-by-side radar + metrics for any analyzed places |
-| 8 | **AI executive summary** | Claude-powered business insights (requires Anthropic key) |
-| 9 | **Owner response analysis** | Response rate, engagement quality, timeline |
-| 10 | **Analysis history** | Full audit log of every place analyzed |
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
 
 ---
 
-## Setup
+## ✨ Features
 
-### 1. Clone and install
+| Feature | What it does |
+|---|---|
+| 🔍 **Universal Place Search** | Analyze any Google Maps place via SerpApi |
+| 🧠 **VADER Sentiment Scoring** | Compound score [-1, +1] per review |
+| 📈 **Sentiment Velocity** | 30-day vs prior 30-day trend detection |
+| 📦 **Topic Clustering** | K-Means auto-groups reviews into themes |
+| 🛡️ **Fake Review Detection** | Heuristic suspicion scoring flags inauthentic reviews |
+| 📊 **Aspect Analysis** | Quality · Service · Value · Location · Cleanliness · Wait Time |
+| 🤖 **AI Chat** | Groq-powered assistant for natural-language insights |
+| 🔖 **Bookmarks** | Save places for quick re-analysis |
+| 📄 **PDF Export** | One-page summary report per analysis |
+| 🆚 **Multi-Place Compare** | Side-by-side radar + metrics for any analyzed places |
+| 📦 **Product Reviews** | Paste reviews from Amazon, Flipkart, Meesho — any platform |
+| 👤 **User Accounts** | Email/password auth via Supabase (free + pro plans) |
+
+---
+
+## 🏗️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Streamlit |
+| Sentiment | VADER (vaderSentiment) |
+| Topics | TF-IDF + K-Means (scikit-learn) |
+| Database | PostgreSQL via Supabase |
+| Auth | Supabase Auth (bcrypt, email confirmation) |
+| Reviews | SerpApi (Google Maps) |
+| AI Chat | Groq API (llama-3.3-70b-versatile) |
+| Deploy | Railway |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Python 3.10+
+- A [Supabase](https://supabase.com) account (free)
+- A [SerpApi](https://serpapi.com) key (100 free searches/month)
+- A [Groq](https://console.groq.com) key (free)
+
+---
+
+### 1. Clone the repo
 
 ```bash
-git clone https://github.com/yourusername/sentiment-lens.git
+git clone https://github.com/YOUR_USERNAME/sentiment-lens.git
 cd sentiment-lens
-python -m venv venv && source venv/bin/activate
+```
+
+### 2. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Create Supabase database
+### 3. Set up Supabase database
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor → New Query**
-3. Paste and run the full contents of `supabase_schema.sql`
-4. Verify: `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';`
+1. Go to [supabase.com](https://supabase.com) → **New project**
+2. Once created, go to **SQL Editor → New Query**
+3. Paste the full contents of `supabase_schema.sql` and click **Run**
+4. ✅ You should see all 8 tables created
 
-### 3. Configure environment
+### 4. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` with your real values:
 
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-service-role-key        # Settings → API → service_role
-SERPAPI_KEY=your-serpapi-key              # serpapi.com (100 free/month)
-ANTHROPIC_API_KEY=your-anthropic-key      # optional — enables AI summary
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_KEY=eyJhbGci...   # SERVICE_ROLE key, NOT anon key
+DB_PATH=postgresql://postgres.your-ref:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+SERPAPI_KEY=your_serpapi_key
+GROK_KEY=your_groq_key
+MAX_REVIEWS=200
+SITE_URL=http://localhost:8501
 ```
 
-### 4. Run
+### 5. Fix Supabase email redirect
+
+1. Supabase Dashboard → **Authentication → URL Configuration**
+2. **Site URL** → set to your production URL
+3. Update `SITE_URL=` in your `.env` to match
+
+### 6. Run locally
 
 ```bash
 streamlit run app.py
 ```
 
-Open `http://localhost:8501`
+Open [http://localhost:8501](http://localhost:8501)
 
 ---
 
-## Deploy to Railway
+## 🚂 Deploy to Railway
 
-1. Push this repo to GitHub
-2. New project in [Railway](https://railway.app) → **Deploy from GitHub repo**
-3. Set environment variables in **Variables** tab:
-   - `SUPABASE_URL`, `SUPABASE_KEY`, `SERPAPI_KEY`, `ANTHROPIC_API_KEY`
-4. Railway auto-detects the `Procfile` and deploys
+### Step 1 — Push to GitHub
+
+```bash
+git init
+git add .
+git commit -m "initial commit"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/sentiment-lens.git
+git push -u origin main
+```
+
+> Make sure `.env` is in `.gitignore` — never push real keys to GitHub.
+
+### Step 2 — Create Railway project
+
+1. Go to [railway.app](https://railway.app) → **New Project**
+2. Click **Deploy from GitHub repo**
+3. Select your `sentiment-lens` repository
+4. Railway auto-detects the `Procfile` — no extra config needed
+
+### Step 3 — Add environment variables
+
+In Railway → your service → **Variables** tab, add each of these:
+
+| Variable | Where to get it |
+|---|---|
+| `SUPABASE_URL` | Supabase → Project Settings → API |
+| `SUPABASE_KEY` | Supabase → Project Settings → API → `service_role` key |
+| `DB_PATH` | Supabase → Project Settings → Database → URI (Transaction Pooler, port 6543) |
+| `SERPAPI_KEY` | [serpapi.com](https://serpapi.com) |
+| `GROK_KEY` | [console.groq.com](https://console.groq.com) |
+| `MAX_REVIEWS` | `200` |
+| `SITE_URL` | Your Railway app URL (after first deploy) |
+
+### Step 4 — Get your Railway URL + update Supabase
+
+1. After deploy: Railway → your service → **Settings → Domains** → copy the URL
+2. Paste it into Supabase → **Authentication → URL Configuration → Site URL**
+3. Also update `SITE_URL=` in Railway Variables and redeploy
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 sentiment-lens/
-├── app.py                          # Streamlit app (entry point)
-├── supabase_schema.sql             # Run this in Supabase SQL Editor
+├── app.py                        # Main Streamlit app (entry point)
+├── supabase_schema.sql           # Run once in Supabase SQL Editor
 ├── requirements.txt
-├── Procfile                        # Railway deployment
-├── railway.toml
-├── .env.example
+├── Procfile                      # Railway start command
+├── railway.toml                  # Railway build config
+├── .env.example                  # Copy to .env and fill in values
+├── .gitignore
 └── src/
-    ├── config.py                   # All constants and thresholds
-    ├── ingestion/
-    │   └── serpapi_loader.py       # Universal Google Maps fetcher
+    ├── config.py                 # Constants, thresholds, colours
+    ├── auth/
+    │   └── tracker.py            # IP geo, device detection, GPS
     ├── analysis/
-    │   ├── sentiment.py            # VADER + velocity
-    │   ├── authenticity.py         # Fake review detection
-    │   └── themes.py               # TF-IDF keywords + K-Means + ABSA
+    │   ├── sentiment.py          # VADER scoring + velocity
+    │   ├── authenticity.py       # Fake review heuristics
+    │   └── themes.py             # TF-IDF + K-Means topic clustering
+    ├── ingestion/
+    │   ├── serpapi_loader.py     # Google Maps review fetcher
+    │   └── product_loader.py     # Manual product review parser
     ├── storage/
-    │   └── supabase_client.py      # All Supabase operations
+    │   └── db.py                 # All PostgreSQL operations
+    ├── exports/
+    │   └── pdf_report.py         # PDF report generation
     └── visualization/
-        └── charts.py               # 13 Plotly chart functions
+        └── charts.py             # Plotly chart library
 ```
 
 ---
 
-## Technical Decisions
+## 🗄️ Database
 
-**Why VADER?** Purpose-built for short informal user text. Handles negations, intensifiers, and punctuation emphasis. No GPU, no fine-tuning, 100% explainable. ~75% accuracy on review corpora vs ~88% for fine-tuned DistilBERT — a good tradeoff for a portfolio project with a clear upgrade path.
+8 tables — run `supabase_schema.sql` to create them all at once.
 
-**Why TF-IDF over KeyBERT/YAKE?** Zero extra dependencies beyond scikit-learn, deterministic, and the score (term frequency weighted by inverse document frequency) is self-explanatory in an interview. Applied per sentiment bucket to find what makes positive reviews positive, not just what reviews talk about.
-
-**Why K-Means for clustering?** Interpretable, fast, scikit-learn native. Cluster labels are derived from top TF-IDF centroid terms — a recruiter can see exactly how topics are named. A production upgrade would use BERTopic for better semantic clustering.
-
-**Why Supabase over SQLite?** The project runs on Railway (no persistent disk). Supabase provides a managed Postgres instance with a Python client that mirrors the supabase-js API. The schema uses a view (`place_summaries`) to avoid recomputing aggregates on every compare-page load.
-
-**Suspicion detection heuristics** flag reviews that are statistically anomalous — very short text with extreme ratings, all-caps writing, excessive punctuation. These are indicative patterns, not definitive proof. Results are presented as "potentially suspicious" throughout the UI.
+| Table | Purpose |
+|---|---|
+| `users` | Profiles + device/geo tracking. **Passwords never stored here** |
+| `places` | Google Maps places with aggregated stats |
+| `reviews` | Individual reviews with VADER scores + topic labels |
+| `product_analyses` | Product review paste sessions |
+| `product_reviews` | Individual product reviews |
+| `search_history` | Per-user audit log of every analysis |
+| `user_search_queries` | Granular query log with timing + status |
+| `bookmarks` | User-saved places |
 
 ---
-<<<<<<< HEAD
 
-## Interview Q&A
+## 🔐 Security
 
-**"Walk me through the pipeline."**
-SerpApi search → get data_id → paginate reviews → VADER score each → authenticity score each → K-Means cluster → store in Supabase → render dashboard.
+- Passwords are **never stored** in this codebase — Supabase Auth uses bcrypt in its internal schema
+- Never commit `.env` to git — it contains your `service_role` key
+- RLS is enabled on all tables
 
-**"How accurate is the sentiment analysis?"**
-VADER achieves ~75% accuracy on review benchmarks (SemEval). For a general-purpose analyzer this is appropriate. The system is designed so VADER can be swapped for a fine-tuned transformer — the analysis layer is one isolated module.
+---
 
-**"How does fake review detection work?"**
-Heuristic scoring across 6 signals: text length, word count vs rating extremity, all-caps, excessive punctuation, and single-word reviews. Each signal has a calibrated weight; the sum is capped at 1.0. Scores above 0.35 are flagged. This is transparent and improvable — production would add author history cross-referencing.
+## 🛠️ Troubleshooting
 
-**"Is the topic clustering supervised?"**
-No — K-Means with TF-IDF features is entirely unsupervised. Cluster labels are derived from the top-weighted centroid terms, so they emerge from the data rather than being predefined. This makes the system work for any place type without category-specific engineering.
-=======
->>>>>>> 8f326ff51dacd551abe6f702ae7564b19cf4b6e8
+| Problem | Fix |
+|---|---|
+| Email links open localhost | Set `SITE_URL` in env + Supabase → Auth → URL Configuration |
+| "Email link expired" error | App shows a **Resend confirmation** button automatically |
+| DB connection fails | Use Transaction Pooler URL (port **6543**), not direct (5432) |
+| Monthly limit reached | Set `plan = 'pro'` for user in Supabase → Table Editor → `users` |
+| Railway deploy fails | Check all 7 env variables are set in Railway → Variables |
+
+---
+
+## 📄 License
+
+MIT

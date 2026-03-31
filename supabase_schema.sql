@@ -383,15 +383,27 @@ ALTER TABLE public.search_history      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_search_queries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks           ENABLE ROW LEVEL SECURITY;
 
--- Service role full access (app uses this key)
-CREATE POLICY IF NOT EXISTS "service_full_users"   ON public.users               FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_places"  ON public.places              FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_reviews" ON public.reviews             FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_pa"      ON public.product_analyses    FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_pr"      ON public.product_reviews     FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_history" ON public.search_history      FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_usq"     ON public.user_search_queries FOR ALL USING (TRUE) WITH CHECK (TRUE);
-CREATE POLICY IF NOT EXISTS "service_full_bm"      ON public.bookmarks           FOR ALL USING (TRUE) WITH CHECK (TRUE);
+-- Service role full access (app uses service_role key which bypasses RLS anyway)
+-- DROP first so re-running this script is safe
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "service_full_users"   ON public.users;
+  DROP POLICY IF EXISTS "service_full_places"  ON public.places;
+  DROP POLICY IF EXISTS "service_full_reviews" ON public.reviews;
+  DROP POLICY IF EXISTS "service_full_pa"      ON public.product_analyses;
+  DROP POLICY IF EXISTS "service_full_pr"      ON public.product_reviews;
+  DROP POLICY IF EXISTS "service_full_history" ON public.search_history;
+  DROP POLICY IF EXISTS "service_full_usq"     ON public.user_search_queries;
+  DROP POLICY IF EXISTS "service_full_bm"      ON public.bookmarks;
+END $$;
+
+CREATE POLICY "service_full_users"   ON public.users               FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_places"  ON public.places              FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_reviews" ON public.reviews             FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_pa"      ON public.product_analyses    FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_pr"      ON public.product_reviews     FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_history" ON public.search_history      FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_usq"     ON public.user_search_queries FOR ALL USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY "service_full_bm"      ON public.bookmarks           FOR ALL USING (TRUE) WITH CHECK (TRUE);
 
 
 -- ================================================================

@@ -250,7 +250,8 @@ div.stButton>button:not([kind="primary"]):hover{{
 def _init():
     for k, v in {
         _THEME_KEY:     "dark",
-        "auth_mode":    "login",   # "login" | "register"
+        "auth_mode":    "login",   # "login" | "register" | "confirm_pending"
+        "confirm_email": "",
         "logged_in":    False,
         "user_id":      None,
         "user_email":   "",
@@ -342,8 +343,18 @@ def auth_register(email: str, password: str, name: str) -> tuple[bool, str]:
         timeout=15)
 
     if resp.status_code not in (200, 201):
-        err = resp.json().get("msg") or resp.json().get("error_description") or "Registration failed."
+        rj  = resp.json()
+        err = rj.get("msg") or rj.get("error_description") or rj.get("error") or "Registration failed."
+        # Supabase returns 422 for already-registered emails
+        if "already" in err.lower() or resp.status_code == 422:
+            return False, "An account with this email already exists. Please sign in instead."
         return False, err
+
+    # Supabase sometimes returns 200 but with identities=[] meaning email already exists
+    data_check = resp.json()
+    identities = (data_check.get("user") or data_check).get("identities", None)
+    if identities is not None and len(identities) == 0:
+        return False, "An account with this email already exists. Please sign in instead."
 
     data = resp.json()
     supa_uid = (data.get("user") or data).get("id", "")
@@ -539,12 +550,18 @@ def page_auth():
 
     mode = st.session_state.get("auth_mode","login")
 
+    _subtitles = {
+        "register":        "Create your account",
+        "login":           "Sign in to your account",
+        "confirm_pending": "Almost there!",
+    }
+    _sub = _subtitles.get(mode, "Sign in to your account")
     st.markdown(f"""
     <div class="sl-auth-wrap">
         <div class="sl-auth-card">
             <div class="sl-auth-logo">🔍</div>
             <div class="sl-auth-title">Sentiment Lens</div>
-            <div class="sl-auth-sub">{"Create your account" if mode=="register" else "Sign in to your account"}</div>
+            <div class="sl-auth-sub">{_sub}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -569,8 +586,9 @@ def page_auth():
                 else:
                     ok, msg = auth_register(email.strip(), pw, name.strip())
                     if ok:
-                        st.success(msg)
-                        st.session_state["auth_mode"] = "login"
+                        # Stay on a confirmation-pending screen, don't auto-switch
+                        st.session_state["auth_mode"]          = "confirm_pending"
+                        st.session_state["confirm_email"]      = email.strip()
                         st.rerun()
                     else:
                         st.error(msg)
@@ -578,6 +596,39 @@ def page_auth():
             st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
             if st.button("Already have an account? Sign in", use_container_width=True):
                 st.session_state["auth_mode"] = "login"
+                st.rerun()
+
+        elif mode == "confirm_pending":
+            # ── Activation email sent screen ─────────────────────────────────
+            reg_email = st.session_state.get("confirm_email", "")
+            st.markdown(f"""
+            <div style='text-align:center;padding:1.5rem 0'>
+                <div style='font-size:3rem'>📬</div>
+                <div style='font-size:1.2rem;font-weight:700;margin:.6rem 0'>Check your inbox</div>
+                <div style='font-size:.9rem;opacity:.7;margin-bottom:1.2rem'>
+                    We sent a confirmation link to<br>
+                    <strong>{reg_email}</strong>
+                </div>
+                <div style='font-size:.8rem;opacity:.55'>
+                    Click the link in the email to activate your account,<br>
+                    then come back here and sign in.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("📧 Resend confirmation email", use_container_width=True):
+                ok2, msg2 = auth_resend_confirmation(reg_email)
+                if ok2:
+                    st.success(msg2)
+                else:
+                    st.error(msg2)
+
+            st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
+            if st.button("I confirmed — take me to Sign in", type="primary", use_container_width=True):
+                st.session_state["auth_mode"] = "login"
+                st.rerun()
+            if st.button("← Back to home", use_container_width=True):
+                st.session_state["auth_mode"] = "home"
                 st.rerun()
 
         else:  # login
@@ -603,24 +654,27 @@ def page_auth():
                             except Exception: pass
                         st.rerun()
                     else:
-                        st.error(msg)
-                        # If error is "Email not confirmed", offer resend button
-                        if "not confirmed" in msg.lower() or "email" in msg.lower():
-                            if st.button("📧 Resend confirmation email", key="_resend_from_login"):
+                        # Better error messages for common cases
+                        if "not confirmed" in msg.lower():
+                            st.warning("⚠️ Your email isn\'t confirmed yet. Check your inbox or resend below.")
+                            st.session_state["confirm_email"] = email.strip()
+                            if st.button("📧 Resend confirmation email", key="_resend_from_login", use_container_width=True):
                                 ok2, msg2 = auth_resend_confirmation(email.strip())
-                                if ok2:
-                                    st.success(msg2)
-                                else:
-                                    st.error(msg2)
+                                st.success(msg2) if ok2 else st.error(msg2)
+                        elif "invalid" in msg.lower() or "credentials" in msg.lower() or "password" in msg.lower():
+                            st.error("❌ Wrong email or password. Please try again.")
+                        else:
+                            st.error(f"❌ {msg}")
 
             st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
-            if st.button("Don't have an account? Create one", use_container_width=True):
+            if st.button("Don\'t have an account? Create one", use_container_width=True):
                 st.session_state["auth_mode"] = "register"
                 st.rerun()
 
-        if st.button("← Back to home", use_container_width=True):
-            st.session_state["auth_mode"] = "home"
-            st.rerun()
+        if mode not in ("confirm_pending",):
+            if st.button("← Back to home", use_container_width=True):
+                st.session_state["auth_mode"] = "home"
+                st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
