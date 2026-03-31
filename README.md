@@ -4,7 +4,11 @@ Universal Google Maps & Reviews Sentiment Analyzer — analyze any place, not ju
 
 Hotels, shops, museums, hospitals, gyms, airports — if it's on Google Maps, Sentiment Lens analyzes it.
 
+<<<<<<< HEAD
 ---
+=======
+----
+>>>>>>> 8f326ff51dacd551abe6f702ae7564b19cf4b6e8
 
 ## Features
 
@@ -115,6 +119,7 @@ sentiment-lens/
 **Suspicion detection heuristics** flag reviews that are statistically anomalous — very short text with extreme ratings, all-caps writing, excessive punctuation. These are indicative patterns, not definitive proof. Results are presented as "potentially suspicious" throughout the UI.
 
 ---
+<<<<<<< HEAD
 
 ## Interview Q&A
 
@@ -129,3 +134,5 @@ Heuristic scoring across 6 signals: text length, word count vs rating extremity,
 
 **"Is the topic clustering supervised?"**
 No — K-Means with TF-IDF features is entirely unsupervised. Cluster labels are derived from the top-weighted centroid terms, so they emerge from the data rather than being predefined. This makes the system work for any place type without category-specific engineering.
+=======
+>>>>>>> 8f326ff51dacd551abe6f702ae7564b19cf4b6e8
