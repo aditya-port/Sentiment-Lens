@@ -65,6 +65,8 @@ section[data-testid="stSidebar"]{{
     box-shadow:4px 0 24px rgba(0,0,0,0.12)!important;
 }}
 section[data-testid="stSidebar"][aria-expanded="false"]{{min-width:268px!important;margin-left:0!important}}
+button[data-testid="collapsedControl"]{{display:none!important}}
+[data-testid="stSidebarNavCollapseButton"]{{display:none!important}}
 [data-testid="stSidebar"] *{{color:{TEXT}!important}}
 [data-testid="stSidebar"] hr{{border-color:{BORDER2}!important}}
 
@@ -240,6 +242,10 @@ div.stButton>button:not([kind="primary"]):hover{{
 ::-webkit-scrollbar{{width:4px!important;height:4px!important}}
 ::-webkit-scrollbar-thumb{{background:{BORDER}!important;border-radius:2px!important}}
 #MainMenu,header,footer{{visibility:hidden!important}}
+/* Remove press-enter tooltip on text inputs */
+[data-testid="InputInstructions"]{{display:none!important}}
+small[class*="instructions"]{{display:none!important}}
+div[class*="InputInstructions"]{{display:none!important}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -264,10 +270,13 @@ def _init():
         "candidates":   [],
         "search_done":  False,
         "max_reviews":  80,
-        "gps_asked":    False,
-        "ai_messages":  [],
-        "prod_df":      pd.DataFrame(),   # product analysis result
-        "prod_name":    "",
+        "gps_asked":            False,
+        "ai_messages":          [],
+        "prod_df":              pd.DataFrame(),
+        "prod_name":            "",
+        "auto_scraped_df":      None,
+        "monthly_report_place": None,
+        "monthly_report_data":  None,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -718,7 +727,7 @@ def render_sidebar():
         st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
 
         nav = st.radio("nav",
-            ["🔍 Analyze","📦 Products","🔖 Bookmarks","📊 Compare","📜 History"],
+            ["🔍 Analyze","📦 Products","🔖 Bookmarks","📊 Compare","📜 History","💡 Tools"],
             label_visibility="collapsed")
         st.session_state["page"] = nav.split(" ",1)[1]
         st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
@@ -729,7 +738,7 @@ def render_sidebar():
             city_input  = st.text_input("City")
             state_input = st.text_input("State")
             cntry_input = st.text_input("Country")
-            max_r       = st.slider("Reviews to fetch", 20, 200, 80, step=10)
+            max_r       = st.slider("Reviews to fetch", 20, 500, 100, step=10)
 
             if st.button("Search Places", type="primary", use_container_width=True):
                 if not place_name.strip():
@@ -959,14 +968,16 @@ def _groq_summary(name, stats, kw, aspect_df) -> str | None:
         asp = "; ".join(f"{r['aspect']}({float(r['pct_positive']):.0f}%pos)"
                         for _,r in aspect_df.iterrows())
     return _groq([{"role":"user","content":(
-        f"Business analyst: write a 3-paragraph executive summary.\n"
-        f"Place:{name} | Rating:{float(stats.get('avg_rating',0)):.1f}/5 | "
-        f"Reviews:{stats['total']} | "
+        f"You are a helpful local guide. Answer these 4 questions about {name}:\n"
+        f"1. Should I visit? (give a clear yes/no/maybe with reason)\n"
+        f"2. Is it good for a family visit or picnic?\n"
+        f"3. What are the best things about this place?\n"
+        f"4. What should visitors be aware of?\n\n"
+        f"Data: Rating:{float(stats.get('avg_rating',0)):.1f}/5 | Reviews:{stats['total']} | "
         f"Positive:{float(stats['pct_positive']):.0f}% | Negative:{float(stats['pct_negative']):.0f}% | "
-        f"Score:{float(stats['avg_compound']):.3f}\n"
+        f"Score:{float(stats['avg_compound']):.3f} | "
         f"Praise:{praise or 'n/a'} | Complaints:{comp or 'n/a'} | Aspects:{asp or 'n/a'}\n"
-        "Para 1:reputation. Para 2:strengths. Para 3:improvements. "
-        "Use specific numbers. Never say 'it is difficult to determine'. 3 paragraphs, no bullets."
+        "Be direct and conversational. Use simple language anyone can understand. No bullet points."
     )}], max_tokens=600)
 
 
@@ -1208,23 +1219,32 @@ def page_analyze():
               delta_color="normal" if float(trust)>=90 else "off")
     st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
 
-    t_ov,t_in,t_tr,t_rv,t_th = st.tabs(
-        ["📊 Overview","🤖 Insights","📈 Trends","💬 Reviews","🔑 Themes"])
+    t_in,t_ov,t_tr,t_rv,t_th = st.tabs(
+        ["🤖 Insights","📊 Overview","📈 Trends","💬 Reviews","🔑 Themes"])
 
     # OVERVIEW ────────────────────────────────────────────────────────────────
     with t_ov:
         c1,c2 = st.columns([1.2,0.8])
-        with c1: st.plotly_chart(sentiment_donut(df), width='stretch')
+        with c1:
+            st.plotly_chart(sentiment_donut(df), width='stretch')
+            st.caption("How reviews split between Positive, Neutral, and Negative sentiment.")
         with c2:
             st.markdown("<div style='padding-top:.5rem'></div>", unsafe_allow_html=True)
             st.plotly_chart(sentiment_gauge(float(stats["avg_compound"])), width='stretch')
+            st.caption("Overall mood score: +1 = extremely positive, -1 = extremely negative, 0 = neutral.")
         st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
         c3,c4 = st.columns(2)
-        with c3: st.plotly_chart(rating_distribution(df), width='stretch')
-        with c4: st.plotly_chart(rating_vs_sentiment(df), width='stretch')
+        with c3:
+            st.plotly_chart(rating_distribution(df), width='stretch')
+            st.caption("How many reviews gave 1★ to 5★. A healthy place has mostly 4★ and 5★.")
+        with c4:
+            st.plotly_chart(rating_vs_sentiment(df), width='stretch')
+            st.caption("Do star ratings match how people actually write? A gap here means mixed signals.")
         st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
         c5,c6 = st.columns(2)
-        with c5: st.plotly_chart(review_length_chart(df), width='stretch')
+        with c5:
+            st.plotly_chart(review_length_chart(df), width='stretch')
+            st.caption("Longer reviews with negative sentiment often describe specific problems worth fixing.")
         with c6:
             if "has_owner_response" in df.columns:
                 rate = 100.0*df["has_owner_response"].sum()/max(len(df),1)
@@ -1232,6 +1252,7 @@ def page_analyze():
                 r1.metric("Response Rate", f"{rate:.0f}%")
                 r2.metric("Responses", int(df["has_owner_response"].sum()))
                 st.plotly_chart(owner_response_chart(df), width='stretch')
+                st.caption("Replying to reviews (especially negative ones) shows customers you care.")
 
         # PDF export
         st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
@@ -1240,7 +1261,7 @@ def page_analyze():
         if st.button("📄 Export PDF Report", use_container_width=True):
             with st.spinner("Generating PDF…"):
                 try:
-                    from src.export.pdf_report import generate_pdf_report
+                    from src.exports.pdf_report import generate_pdf_report
                     pdf = generate_pdf_report(
                         name, stats, velocity, float(trust), asp_pdf,
                         kw_pdf.get("positive",[]), kw_pdf.get("negative",[]), "place")
@@ -1282,18 +1303,18 @@ def page_analyze():
             st.plotly_chart(fig_h, width='stretch')
 
         st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sl-section">AI Executive Summary</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sl-section">🤖 AI Guide — Should You Visit?</div>', unsafe_allow_html=True)
         if _groq_key():
-            if st.button("Generate AI Summary", type="primary"):
-                with st.spinner("Generating…"):
+            if st.button("🤖 Ask AI about this place", type="primary"):
+                with st.spinner("Thinking…"):
                     s = _groq_summary(name, stats, kw2, aspect2)
                 if s:
                     st.markdown(
-                        f"<div class='sl-card'><div class='sl-card-title'>🤖 AI Summary</div>"
+                        f"<div class='sl-card'><div class='sl-card-title'>🤖 AI Guide</div>"
                         f"<div class='sl-card-body'>{s.replace(chr(10),'<br>')}</div></div>",
                         unsafe_allow_html=True)
         else:
-            st.markdown('<div class="sl-info">Add <code>GROK_KEY</code> to .env for AI summaries.</div>',
+            st.markdown('<div class="sl-info">Add <code>GROK_KEY</code> to .env to enable AI guide.</div>',
                         unsafe_allow_html=True)
 
         if not aspect2.empty:
@@ -1320,8 +1341,7 @@ def page_analyze():
         with vc:
             st.metric("30-Day Change", f'{float(v.get("recent_avg",0)):+.3f}',
                       delta=f'{float(v.get("pct_change",0)):+.1f} pts vs prior',
-                      delta_color="normal" if v["direction"]!="declining" else "inverse",
-                      help="Score points changed on [-100,+100] scale vs prior 30-day window.")
+                      delta_color="normal" if v["direction"]!="declining" else "inverse")
         with vd:
             st.markdown(
                 f"<div class='sl-card'><div class='sl-card-title'>Velocity</div>"
@@ -1330,11 +1350,18 @@ def page_analyze():
                 f" &nbsp;|&nbsp; Delta: <b>{float(v.get('delta',0)):+.3f}</b>"
                 f" &nbsp;|&nbsp; Trend: <b>{v['direction'].capitalize()}</b></div></div>",
                 unsafe_allow_html=True)
+        st.caption("30-Day Change compares this month's average sentiment score to the previous month.")
         st.plotly_chart(sentiment_over_time(df), width='stretch')
+        st.caption("Each dot is one day's average mood. The smooth line shows the overall trend.")
         c1,c2 = st.columns(2)
-        with c1: st.plotly_chart(monthly_volume(df),      width='stretch')
-        with c2: st.plotly_chart(rating_over_time(df),    width='stretch')
+        with c1:
+            st.plotly_chart(monthly_volume(df), width='stretch')
+            st.caption("How many reviews arrived each month. Spikes often follow events or promotions.")
+        with c2:
+            st.plotly_chart(rating_over_time(df), width='stretch')
+            st.caption("Average star rating per month. Is quality improving or declining over time?")
         st.plotly_chart(sentiment_by_weekday(df), width='stretch')
+        st.caption("Which day of the week gets the best reviews? Useful for staffing decisions.")
 
     # REVIEWS ─────────────────────────────────────────────────────────────────
     with t_rv:
@@ -1415,32 +1442,80 @@ def page_analyze():
 # ═══════════════════════════════════════════════════════════════════════════════
 def page_products():
     st.markdown("## 📦 Product Review Analyzer")
-    st.markdown("""<div class="sl-info">
-        Paste product reviews from <b>Flipkart, Meesho, Amazon, Nykaa</b> — any platform.<br>
-        One review per line. Optionally start with a rating: <code>4/5: Great product!</code>
-    </div>""", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
+    tab_auto, tab_paste = st.tabs(["🔗 Auto-Fetch from URL", "📋 Paste Reviews Manually"])
 
-    c1,c2,c3 = st.columns([2,1,1])
-    with c1: product_name = st.text_input("Product name")
-    with c2: platform     = st.selectbox("Platform", ["Flipkart","Meesho","Amazon","Nykaa","Myntra","Other"])
-    with c3: product_url  = st.text_input("Product URL (optional)")
+    with tab_auto:
+        st.markdown("""<div class="sl-info">
+            Paste a product URL from <b>Amazon, Flipkart, Meesho</b> and we'll try to fetch reviews automatically.
+            Works best with Amazon India/US product pages.
+        </div>""", unsafe_allow_html=True)
+        ac1,ac2 = st.columns([3,1])
+        with ac1: auto_url  = st.text_input("Product URL", key="auto_url")
+        with ac2: auto_plat = st.selectbox("Platform", ["Amazon","Flipkart","Meesho","Other"], key="auto_plat")
+        auto_name = st.text_input("Product name", key="auto_name")
+        if st.button("🔍 Fetch Reviews Automatically", type="primary", use_container_width=True, key="auto_btn"):
+            if not auto_url.strip() and not auto_name.strip():
+                st.error("Enter a URL or product name.")
+            else:
+                with st.spinner("Fetching reviews from the web…"):
+                    try:
+                        from src.ingestion.product_scraper import scrape_product_reviews
+                        scraped_df, method = scrape_product_reviews(
+                            url=auto_url.strip(), product_name=auto_name.strip(),
+                            platform=auto_plat, api_key=_serpapi_key(), max_reviews=200)
+                        if scraped_df.empty:
+                            st.warning("Could not auto-fetch reviews for this URL. The site may block scraping. "
+                                       "Please paste the reviews manually in the other tab.")
+                        else:
+                            st.success(f"Fetched {len(scraped_df)} reviews via {method}!")
+                            st.session_state["auto_scraped_df"]   = scraped_df
+                            st.session_state["auto_product_name"] = auto_name.strip() or auto_url.split("/")[-1][:40]
+                            st.session_state["auto_platform"]     = auto_plat
+                            st.session_state["auto_product_url"]  = auto_url.strip()
+                    except Exception as e:
+                        st.error(f"Fetch error: {e}. Please paste reviews manually.")
 
-    raw_text = st.text_area(
-        "Paste reviews here — one per line",
-        height=220,
-        placeholder=(
-            "Excellent product, loved the quality!\n"
-            "5/5: Amazing value for money\n"
-            "★★★ Decent but could be better\n"
-            "2/5: Poor packaging, took 2 weeks to arrive\n"
-            "Very happy with the purchase!"
-        )
-    )
+        # If auto-fetch succeeded, show analyse button
+        if st.session_state.get("auto_scraped_df") is not None and not st.session_state["auto_scraped_df"].empty:
+            scraped = st.session_state["auto_scraped_df"]
+            st.info(f"Ready to analyse **{len(scraped)} reviews** fetched automatically.")
+            if st.button("🧠 Analyse Fetched Reviews", type="primary", use_container_width=True, key="auto_analyse"):
+                uid = st.session_state.get("user_id","")
+                if uid:
+                    allowed, used, limit = get_db().check_and_increment_usage(uid)
+                    if not allowed:
+                        st.error(f"Monthly limit reached ({used}/{limit}). Upgrade to Pro.")
+                        return
+                _run_product_analysis(
+                    scraped,
+                    st.session_state.get("auto_product_name","Product"),
+                    st.session_state.get("auto_platform","Other"),
+                    st.session_state.get("auto_product_url",""),
+                )
+                st.session_state["auto_scraped_df"] = None  # clear after analysis
 
-    if st.button("Analyse Reviews", type="primary", use_container_width=True):
-        from src.ingestion.product_loader import parse_pasted_reviews, validate_paste
+    with tab_paste:
+        st.markdown("""<div class="sl-info">
+            Paste product reviews from <b>Flipkart, Meesho, Amazon, Nykaa</b> — any platform.<br>
+            One review per line. Optionally start with a rating: <code>4/5: Great product!</code>
+        </div>""", unsafe_allow_html=True)
+        st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
+        c1,c2,c3 = st.columns([2,1,1])
+        with c1: product_name = st.text_input("Product name")
+        with c2: platform     = st.selectbox("Platform", ["Flipkart","Meesho","Amazon","Nykaa","Myntra","Other"])
+        with c3: product_url  = st.text_input("Product URL (optional)")
+        raw_text = st.text_area(
+            "Paste reviews here — one per line", height=220,
+            placeholder=(
+                "Excellent product, loved the quality!\n"
+                "5/5: Amazing value for money\n"
+                "★★★ Decent but could be better\n"
+                "2/5: Poor packaging, took 2 weeks to arrive\n"
+                "Very happy with the purchase!"))
+
+        if st.button("Analyse Reviews", type="primary", use_container_width=True):
+            from src.ingestion.product_loader import parse_pasted_reviews, validate_paste
 
         # Usage limit check
         uid = st.session_state.get("user_id","")
@@ -1463,26 +1538,8 @@ def page_products():
             if df.empty:
                 st.error("Could not parse any reviews. Check the format.")
                 return
-
-            from src.analysis.sentiment    import analyze_sentiment
-            from src.analysis.authenticity import analyze_authenticity
-            from src.analysis.themes       import cluster_reviews
-
-            df = analyze_sentiment(df)
-            df = analyze_authenticity(df)
-            df = cluster_reviews(df)
-
-            # Save to DB
-            try:
-                analysis_id = get_db().save_product_analysis(
-                    uid, product_name.strip(), platform, product_url.strip(), df)
-            except Exception:
-                analysis_id = None
-
-            st.session_state["prod_df"]   = df
-            st.session_state["prod_name"] = product_name.strip()
-
-        st.success(f"Analysed {len(df)} reviews for **{product_name}**")
+            _run_product_analysis(df, product_name.strip(), platform, product_url.strip())
+            return  # _run_product_analysis handles session state
 
     # Show results
     df   = st.session_state.get("prod_df", pd.DataFrame())
@@ -1544,7 +1601,7 @@ def page_products():
     kw_pdf  = get_sentiment_keywords(df, top_n=8)
     asp_pdf = get_aspect_sentiment(df)
     if st.button("📄 Export PDF Report", key="prod_pdf", use_container_width=True):
-        from src.export.pdf_report import generate_pdf_report
+        from src.exports.pdf_report import generate_pdf_report
         pdf = generate_pdf_report(
             pname, stats, {}, float(trust), asp_pdf,
             kw_pdf.get("positive",[]), kw_pdf.get("negative",[]), "product")
@@ -1555,6 +1612,27 @@ def page_products():
     st.download_button("⬇️ Export Reviews CSV",
         df.to_csv(index=False).encode(),
         f"{pname.replace(' ','_')}_reviews.csv","text/csv")
+
+
+
+
+def _run_product_analysis(df_raw: pd.DataFrame, product_name: str, platform: str, product_url: str):
+    """Shared helper: run sentiment pipeline on a product df and save results."""
+    uid = st.session_state.get("user_id","")
+    with st.spinner("Analysing sentiment…"):
+        from src.analysis.sentiment    import analyze_sentiment
+        from src.analysis.authenticity import analyze_authenticity
+        from src.analysis.themes       import cluster_reviews
+        df = analyze_sentiment(df_raw)
+        df = analyze_authenticity(df)
+        df = cluster_reviews(df)
+    try:
+        get_db().save_product_analysis(uid, product_name, platform, product_url, df)
+    except Exception:
+        pass
+    st.session_state["prod_df"]   = df
+    st.session_state["prod_name"] = product_name
+    st.success(f"Analysed **{len(df)} reviews** for **{product_name}**")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1595,6 +1673,84 @@ def page_bookmarks():
                             "page":       "Analyze",
                         })
                         st.rerun()
+            if st.button("📊", key=f"bm_report_{row.get('place_id','')}", help="Get monthly report"):
+                st.session_state["monthly_report_place"] = {
+                    "place_id": str(row.get("place_id","")),
+                    "place_name": str(row.get("place_name","")),
+                }
+                st.rerun()
+
+
+    # Monthly report section (shown when 📊 clicked)
+    mrp = st.session_state.get("monthly_report_place")
+    if mrp:
+        st.markdown("---")
+        st.markdown(f"### 📊 Monthly Report — {mrp.get('place_name','')}")
+        email_input = st.text_input(
+            "📧 Email address to receive the report",
+            key="monthly_email",
+            help="Enter your email to receive this report as a PDF")
+        c_preview, c_send = st.columns(2)
+        with c_preview:
+            if st.button("👁️ Preview Report", use_container_width=True):
+                with st.spinner("Building report…"):
+                    try:
+                        rdf = _load_reviews_cached(mrp["place_id"])
+                        from src.reports.monthly_report import build_monthly_report
+                        report = build_monthly_report(mrp["place_name"], mrp["place_id"], rdf)
+                        if not report:
+                            st.warning("Not enough data for a monthly report yet.")
+                        else:
+                            curr = report.get("curr", {})
+                            prev = report.get("prev", {})
+                            st.markdown(f"**Month:** {report.get('month','')}")
+                            mc1,mc2,mc3 = st.columns(3)
+                            mc1.metric("Reviews this month", curr.get("total",0),
+                                       delta=int(curr.get("total",0))-int(prev.get("total",0)))
+                            mc2.metric("% Positive", f'{curr.get("pct_positive",0):.1f}%',
+                                       delta=f'{curr.get("pct_positive",0)-prev.get("pct_positive",0):+.1f}%')
+                            mc3.metric("% Negative", f'{curr.get("pct_negative",0):.1f}%',
+                                       delta=f'{curr.get("pct_negative",0)-prev.get("pct_negative",0):+.1f}%',
+                                       delta_color="inverse")
+                            if report.get("suggestions"):
+                                st.markdown("**AI Recommendations:**")
+                                for s in report["suggestions"]:
+                                    st.markdown(f"• {s}")
+                            st.session_state["monthly_report_data"] = report
+                    except Exception as e:
+                        st.error(f"Report error: {e}")
+        with c_send:
+            if st.button("📧 Email PDF Report", type="primary", use_container_width=True):
+                if not st.session_state.get("monthly_email","").strip():
+                    st.error("Enter an email address first.")
+                elif not st.session_state.get("monthly_report_data"):
+                    st.warning("Click Preview Report first, then send.")
+                else:
+                    with st.spinner("Generating PDF and sending email…"):
+                        try:
+                            from src.reports.monthly_report import generate_monthly_pdf, send_report_email
+                            report = st.session_state["monthly_report_data"]
+                            pdf    = generate_monthly_pdf(report)
+                            ok, msg = send_report_email(
+                                st.session_state["monthly_email"].strip(),
+                                mrp["place_name"], pdf, report.get("month",""))
+                            if ok:
+                                st.success(msg)
+                            else:
+                                # Offer download instead
+                                st.warning(f"{msg}")
+                                st.download_button(
+                                    "⬇️ Download PDF Instead",
+                                    data=pdf,
+                                    file_name=f"{mrp['place_name'].replace(' ','_')}_monthly_report.pdf",
+                                    mime="application/pdf")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+        if st.button("✕ Close Report", use_container_width=True):
+            st.session_state.pop("monthly_report_place", None)
+            st.session_state.pop("monthly_report_data", None)
+            st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1639,6 +1795,124 @@ def page_history():
         "avg_rating":"Avg ★","avg_sentiment":"Sentiment","pct_positive":"% Positive","trust_score":"Trust %"}),
         width='stretch', height=480, hide_index=True)
     st.download_button("⬇️ Export", hist.to_csv(index=False).encode(), "history.csv", "text/csv")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOOLS PAGE (Competitor Radar + Bulk Analyzer + Review Responder)
+# ═══════════════════════════════════════════════════════════════════════════════
+def page_tools():
+    st.markdown("## 💡 Tools")
+    t1, t2, t3 = st.tabs(["🏆 Competitor Radar", "📋 Bulk Place Analyzer", "💬 Review Responder"])
+
+    # ── Tool 1: Competitor Radar ──────────────────────────────────────────────
+    with t1:
+        st.markdown("""<div class="sl-info">
+            Compare your place against competitors side-by-side.
+            Analyse 2–5 places and see who wins on sentiment, rating, trust, and more.
+        </div>""", unsafe_allow_html=True)
+        all_p = get_db().get_all_places()
+        if all_p.empty or len(all_p) < 2:
+            st.info("Analyse at least 2 places first using the main Analyze page.")
+        else:
+            sel = st.multiselect("Pick places to compare (2–5)", all_p["name"].tolist(), max_selections=5)
+            if len(sel) >= 2:
+                sel_rows = all_p[all_p["name"].isin(sel)]
+                try:
+                    summ = get_db().get_place_summaries(sel_rows["place_id"].tolist())
+                except Exception:
+                    summ = sel_rows.copy()
+                if not summ.empty:
+                    from src.visualization.charts import comparison_radar
+                    for col,default in [("total_reviews",0),("positive_count",0),
+                                        ("avg_sentiment",0),("avg_rating",0),("trust_score",100)]:
+                        if col not in summ.columns: summ[col] = default
+                        else: summ[col] = pd.to_numeric(summ[col], errors="coerce").fillna(default)
+                    dc = [c for c in ["name","avg_rating","avg_sentiment","total_reviews",
+                                      "positive_count","negative_count","trust_score"] if c in summ.columns]
+                    st.dataframe(summ[dc].rename(columns={"name":"Place","avg_rating":"Avg ★",
+                        "avg_sentiment":"Sentiment","total_reviews":"Reviews","positive_count":"Positive",
+                        "negative_count":"Negative","trust_score":"Trust %"}),
+                        width="stretch", hide_index=True)
+                    st.caption("Radar shows 5 dimensions: Sentiment (mood), Rating, Trust (authenticity), % Positive, Volume (relative review count).")
+                    st.plotly_chart(comparison_radar(summ), width="stretch")
+                    # Winner highlights
+                    if "avg_sentiment" in summ.columns:
+                        best_sent = summ.loc[summ["avg_sentiment"].idxmax(), "name"]
+                        best_rat  = summ.loc[summ["avg_rating"].idxmax(), "name"] if "avg_rating" in summ.columns else "—"
+                        st.markdown(
+                            f"<div class='sl-card'>"
+                            f"<div class='sl-card-title'>🏆 Winners</div>"
+                            f"<div class='sl-card-body'>"
+                            f"Best sentiment: <b>{best_sent}</b> &nbsp;·&nbsp; Best rating: <b>{best_rat}</b>"
+                            f"</div></div>", unsafe_allow_html=True)
+            elif sel:
+                st.caption("Select at least 2 places.")
+
+    # ── Tool 2: Bulk Place Analyzer ───────────────────────────────────────────
+    with t2:
+        st.markdown("""<div class="sl-info">
+            Analyse multiple places in one go. Enter each place on a new line.
+        </div>""", unsafe_allow_html=True)
+        bulk_city    = st.text_input("City (applies to all)", key="bulk_city")
+        bulk_country = st.text_input("Country", key="bulk_country")
+        bulk_places  = st.text_area("Place names — one per line", height=120, key="bulk_places")
+        bulk_max     = st.slider("Reviews per place", 20, 200, 50, step=10, key="bulk_max")
+        if st.button("🚀 Analyse All", type="primary", use_container_width=True, key="bulk_btn"):
+            if not bulk_places.strip():
+                st.error("Enter at least one place name.")
+            elif not _serpapi_key():
+                st.error("SERPAPI_KEY not set.")
+            else:
+                names = [n.strip() for n in bulk_places.strip().splitlines() if n.strip()]
+                uid   = st.session_state.get("user_id","")
+                results = []
+                prog = st.progress(0, text="Starting…")
+                for i, pname in enumerate(names):
+                    prog.progress((i) / len(names), text=f"Analysing {pname}…")
+                    try:
+                        from src.ingestion.serpapi_loader import search_candidates, SerpApiError
+                        cands = search_candidates(name=pname, city=bulk_city, country=bulk_country,
+                                                  api_key=_serpapi_key(), max_candidates=1)
+                        if cands:
+                            ok, msg = run_pipeline(cands[0], bulk_max)
+                            results.append({"Place": pname, "Status": "✅" if ok else "❌", "Note": msg})
+                    except Exception as e:
+                        results.append({"Place": pname, "Status": "❌", "Note": str(e)})
+                prog.progress(1.0, text="Done!")
+                st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
+
+    # ── Tool 3: Review Responder ──────────────────────────────────────────────
+    with t3:
+        st.markdown("""<div class="sl-info">
+            Paste a customer review and get a professional, empathetic AI-generated owner response.
+            Ready to copy and paste directly on Google Maps.
+        </div>""", unsafe_allow_html=True)
+        rev_text  = st.text_area("Paste the customer review here", height=120, key="resp_rev")
+        rev_stars = st.select_slider("Review rating", options=[1,2,3,4,5], value=3, key="resp_stars")
+        place_ctx = st.text_input("Your place name (optional, for context)", key="resp_place")
+        if st.button("✍️ Generate Response", type="primary", use_container_width=True, key="resp_btn"):
+            if not rev_text.strip():
+                st.error("Paste a review first.")
+            elif not _groq_key():
+                st.error("GROK_KEY not set in .env.")
+            else:
+                with st.spinner("Writing response…"):
+                    tone = "apologetic and solution-focused" if rev_stars <= 2 else "grateful and warm"
+                    prompt = (
+                        f"You are the owner of {place_ctx or 'a business'}. "
+                        f"A customer left a {rev_stars}★ review:\n\n\"{rev_text.strip()}\"\n\n"
+                        f"Write a {tone} professional response (3-5 sentences). "
+                        "Acknowledge their experience. If negative: apologise sincerely and offer to make it right. "
+                        "If positive: thank them warmly and invite them back. "
+                        "Sound human, not corporate. No emojis. No generic phrases like 'we value your feedback'."
+                    )
+                    resp = _groq([{"role":"user","content":prompt}], max_tokens=200)
+                    if resp:
+                        st.markdown(
+                            f"<div class='sl-card'><div class='sl-card-title'>✍️ Suggested Response</div>"
+                            f"<div class='sl-card-body'>{resp}</div></div>",
+                            unsafe_allow_html=True)
+                        st.caption("Edit as needed, then copy and paste to your Google Maps review response.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1687,6 +1961,7 @@ elif page == "Products":  page_products()
 elif page == "Bookmarks": page_bookmarks()
 elif page == "Compare":   page_compare()
 elif page == "History":   page_history()
+elif page == "Tools":     page_tools()
 else:                     page_analyze()
 
 st.markdown("""

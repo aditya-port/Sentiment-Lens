@@ -1,13 +1,6 @@
 """
 src/config.py — all constants and env-var bindings.
-
-Env vars (match your .env exactly):
-  DB_PATH      — full PostgreSQL URL
-  SERPAPI_KEY  — SerpApi key
-  GROK_KEY     — Groq API key
-  MAX_REVIEWS  — review fetch cap (default 100)
 """
-
 import os
 from dotenv import load_dotenv
 
@@ -15,8 +8,8 @@ load_dotenv()
 
 DB_PATH      = os.getenv("DB_PATH", "")
 SERPAPI_KEY  = os.getenv("SERPAPI_KEY", "")
-GROQ_KEY     = os.getenv("GROK_KEY", "")   # your .env uses GROK_KEY
-MAX_REVIEWS  = int(os.getenv("MAX_REVIEWS", "100"))
+GROQ_KEY     = os.getenv("GROK_KEY", "")
+MAX_REVIEWS  = int(os.getenv("MAX_REVIEWS", "500"))   # raised from 200→500
 
 SERPAPI_BASE          = "https://serpapi.com/search"
 GROQ_MODEL            = "llama-3.3-70b-versatile"
@@ -25,6 +18,9 @@ AI_SUMMARY_MAX_TOKENS = 600
 
 POSITIVE_THRESHOLD = 0.05
 NEGATIVE_THRESHOLD = -0.05
+
+# Minimum review text length to be considered a "real" review
+MIN_REVIEW_CHARS = 10   # reviews shorter than this are ignored (neutrals with no text)
 
 SUSPICION_WEIGHTS = {
     "very_short_text":    0.35,
@@ -35,6 +31,8 @@ SUSPICION_WEIGHTS = {
     "single_word":        0.30,
 }
 SUSPICION_FLAG_THRESHOLD = 0.35
+
+FREE_MONTHLY_LIMIT = 20   # raised from 10→20
 
 N_CLUSTERS                 = 5
 MIN_REVIEWS_FOR_CLUSTERING = 15

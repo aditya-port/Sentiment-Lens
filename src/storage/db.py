@@ -34,7 +34,7 @@ from psycopg2.pool import ThreadedConnectionPool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.config import DB_PATH
 
-FREE_MONTHLY_LIMIT = 10  # analyses per month on free tier
+FREE_MONTHLY_LIMIT = 20  # analyses per month on free tier
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
