@@ -277,6 +277,7 @@ def _init():
         "auto_scraped_df":      None,
         "monthly_report_place": None,
         "monthly_report_data":  None,
+        "prod_platform":        "",
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -1445,110 +1446,149 @@ def page_products():
 
     tab_auto, tab_paste = st.tabs(["🔗 Auto-Fetch from URL", "📋 Paste Reviews Manually"])
 
+    # ── AUTO FETCH TAB ────────────────────────────────────────────────────────
     with tab_auto:
         st.markdown("""<div class="sl-info">
-            Paste a product URL from <b>Amazon, Flipkart, Meesho</b> and we'll try to fetch reviews automatically.
-            Works best with Amazon India/US product pages.
+            Paste a product URL from <b>Amazon, Flipkart, Meesho</b> and we'll try to fetch reviews automatically.<br>
+            Also works with just a product name — we'll search the web for reviews.
         </div>""", unsafe_allow_html=True)
-        ac1,ac2 = st.columns([3,1])
-        with ac1: auto_url  = st.text_input("Product URL", key="auto_url")
-        with ac2: auto_plat = st.selectbox("Platform", ["Amazon","Flipkart","Meesho","Other"], key="auto_plat")
-        auto_name = st.text_input("Product name", key="auto_name")
+
+        ac1, ac2 = st.columns([3, 1])
+        with ac1:
+            auto_url = st.text_input("Product URL (paste the product page link)", key="auto_url")
+        with ac2:
+            auto_plat = st.selectbox("Platform", ["Amazon", "Flipkart", "Meesho", "Nykaa", "Myntra", "Other"], key="auto_plat")
+
+        auto_name = st.text_input("Product name (helps find better results)", key="auto_name")
+        auto_max  = st.slider("Max reviews to fetch", 20, 300, 100, step=10, key="auto_max")
+
         if st.button("🔍 Fetch Reviews Automatically", type="primary", use_container_width=True, key="auto_btn"):
             if not auto_url.strip() and not auto_name.strip():
-                st.error("Enter a URL or product name.")
+                st.error("Enter a product URL or at least a product name.")
             else:
-                with st.spinner("Fetching reviews from the web…"):
-                    try:
-                        from src.ingestion.product_scraper import scrape_product_reviews
-                        scraped_df, method = scrape_product_reviews(
-                            url=auto_url.strip(), product_name=auto_name.strip(),
-                            platform=auto_plat, api_key=_serpapi_key(), max_reviews=200)
-                        if scraped_df.empty:
-                            st.warning("Could not auto-fetch reviews for this URL. The site may block scraping. "
-                                       "Please paste the reviews manually in the other tab.")
-                        else:
-                            st.success(f"Fetched {len(scraped_df)} reviews via {method}!")
-                            st.session_state["auto_scraped_df"]   = scraped_df
-                            st.session_state["auto_product_name"] = auto_name.strip() or auto_url.split("/")[-1][:40]
-                            st.session_state["auto_platform"]     = auto_plat
-                            st.session_state["auto_product_url"]  = auto_url.strip()
-                    except Exception as e:
-                        st.error(f"Fetch error: {e}. Please paste reviews manually.")
-
-        # If auto-fetch succeeded, show analyse button
-        if st.session_state.get("auto_scraped_df") is not None and not st.session_state["auto_scraped_df"].empty:
-            scraped = st.session_state["auto_scraped_df"]
-            st.info(f"Ready to analyse **{len(scraped)} reviews** fetched automatically.")
-            if st.button("🧠 Analyse Fetched Reviews", type="primary", use_container_width=True, key="auto_analyse"):
-                uid = st.session_state.get("user_id","")
+                uid = st.session_state.get("user_id", "")
                 if uid:
                     allowed, used, limit = get_db().check_and_increment_usage(uid)
                     if not allowed:
                         st.error(f"Monthly limit reached ({used}/{limit}). Upgrade to Pro.")
-                        return
+                        st.stop()
+
+                with st.spinner("Fetching reviews from the web… this may take 10–20 seconds."):
+                    try:
+                        from src.ingestion.product_scraper import scrape_product_reviews
+                        scraped_df, method = scrape_product_reviews(
+                            url=auto_url.strip(),
+                            product_name=auto_name.strip(),
+                            platform=auto_plat,
+                            api_key=_serpapi_key(),
+                            max_reviews=auto_max,
+                        )
+                        if scraped_df.empty:
+                            st.warning(
+                                "⚠️ Could not auto-fetch reviews for this URL. "
+                                "The site may block bots. **Try the Paste tab instead** — "
+                                "copy reviews from the site and paste them there."
+                            )
+                        else:
+                            pname = auto_name.strip() or auto_url.split("/")[-1][:50] or "Product"
+                            st.success(f"✅ Fetched **{len(scraped_df)} reviews** via {method}!")
+                            st.session_state["auto_scraped_df"]   = scraped_df
+                            st.session_state["auto_product_name"] = pname
+                            st.session_state["auto_platform"]     = auto_plat
+                            st.session_state["auto_product_url"]  = auto_url.strip()
+                    except Exception as e:
+                        st.error(f"Fetch error: {e}")
+                        st.info("Try pasting the reviews manually in the other tab.")
+
+        # Show fetched reviews + analyse button
+        scraped = st.session_state.get("auto_scraped_df")
+        if scraped is not None and not scraped.empty:
+            st.markdown(f"**{len(scraped)} reviews ready** — click below to analyse.")
+            if scraped is not None and "review_text" in scraped.columns:
+                with st.expander("Preview fetched reviews"):
+                    st.dataframe(scraped[["review_text"]].head(10), use_container_width=True)
+
+            if st.button("🧠 Analyse Fetched Reviews", type="primary", use_container_width=True, key="auto_analyse"):
                 _run_product_analysis(
                     scraped,
-                    st.session_state.get("auto_product_name","Product"),
-                    st.session_state.get("auto_platform","Other"),
-                    st.session_state.get("auto_product_url",""),
+                    st.session_state.get("auto_product_name", "Product"),
+                    st.session_state.get("auto_platform", "Other"),
+                    st.session_state.get("auto_product_url", ""),
                 )
-                st.session_state["auto_scraped_df"] = None  # clear after analysis
+                st.session_state["auto_scraped_df"] = None
 
+    # ── PASTE TAB ─────────────────────────────────────────────────────────────
     with tab_paste:
         st.markdown("""<div class="sl-info">
             Paste product reviews from <b>Flipkart, Meesho, Amazon, Nykaa</b> — any platform.<br>
-            One review per line. Optionally start with a rating: <code>4/5: Great product!</code>
+            One review per line. Optionally prefix with a rating: <code>4/5: Great product!</code>
         </div>""", unsafe_allow_html=True)
-        st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
-        c1,c2,c3 = st.columns([2,1,1])
-        with c1: product_name = st.text_input("Product name")
-        with c2: platform     = st.selectbox("Platform", ["Flipkart","Meesho","Amazon","Nykaa","Myntra","Other"])
-        with c3: product_url  = st.text_input("Product URL (optional)")
+
+        p1, p2, p3 = st.columns([2, 1, 1])
+        with p1: product_name = st.text_input("Product name", key="paste_name")
+        with p2: platform     = st.selectbox("Platform", ["Flipkart","Meesho","Amazon","Nykaa","Myntra","Other"], key="paste_plat")
+        with p3: product_url  = st.text_input("Product URL (optional)", key="paste_url")
+
         raw_text = st.text_area(
-            "Paste reviews here — one per line", height=220,
+            "Paste reviews here — one per line", height=220, key="paste_text",
             placeholder=(
                 "Excellent product, loved the quality!\n"
                 "5/5: Amazing value for money\n"
                 "★★★ Decent but could be better\n"
                 "2/5: Poor packaging, took 2 weeks to arrive\n"
-                "Very happy with the purchase!"))
+                "Very happy with the purchase!"
+            )
+        )
 
-        if st.button("Analyse Reviews", type="primary", use_container_width=True):
-            from src.ingestion.product_loader import parse_pasted_reviews, validate_paste
+        if st.button("Analyse Reviews", type="primary", use_container_width=True, key="paste_btn"):
+            # validate inputs
+            if not product_name.strip():
+                st.error("Enter a product name.")
+            elif not raw_text.strip():
+                st.error("Paste some reviews first.")
+            else:
+                uid = st.session_state.get("user_id", "")
+                if uid:
+                    allowed, used, limit = get_db().check_and_increment_usage(uid)
+                    if not allowed:
+                        st.error(f"Monthly limit reached ({used}/{limit}). Upgrade to Pro.")
+                        st.stop()
 
-        # Usage limit check
-        uid = st.session_state.get("user_id","")
-        if uid:
-            allowed, used, limit = get_db().check_and_increment_usage(uid)
-            if not allowed:
-                st.error(f"Monthly limit reached ({used}/{limit}). Upgrade to Pro for unlimited.")
-                return
+                try:
+                    from src.ingestion.product_loader import parse_pasted_reviews, validate_paste
+                    valid, vmsg = validate_paste(raw_text)
+                    if not valid:
+                        st.error(vmsg)
+                    else:
+                        with st.spinner("Parsing and analysing reviews…"):
+                            parsed_df = parse_pasted_reviews(raw_text, platform)
+                            if parsed_df.empty:
+                                st.error("Could not parse any reviews. Check the format.")
+                            else:
+                                _run_product_analysis(
+                                    parsed_df,
+                                    product_name.strip(),
+                                    platform,
+                                    product_url.strip(),
+                                )
+                except ImportError:
+                    # product_loader missing — parse inline
+                    lines = [l.strip() for l in raw_text.strip().splitlines() if len(l.strip()) > 5]
+                    if not lines:
+                        st.error("No reviews found. Each review should be on its own line.")
+                    else:
+                        fallback_df = pd.DataFrame({"review_text": lines, "rating": None})
+                        with st.spinner("Analysing…"):
+                            _run_product_analysis(fallback_df, product_name.strip(), platform, product_url.strip())
 
-        valid, msg = validate_paste(raw_text)
-        if not valid:
-            st.error(msg)
-            return
-        if not product_name.strip():
-            st.error("Enter a product name.")
-            return
-
-        with st.spinner("Parsing and analysing reviews…"):
-            df = parse_pasted_reviews(raw_text, platform)
-            if df.empty:
-                st.error("Could not parse any reviews. Check the format.")
-                return
-            _run_product_analysis(df, product_name.strip(), platform, product_url.strip())
-            return  # _run_product_analysis handles session state
-
-    # Show results
-    df   = st.session_state.get("prod_df", pd.DataFrame())
-    pname = st.session_state.get("prod_name","")
+    # ── RESULTS (shown below both tabs) ───────────────────────────────────────
+    df    = st.session_state.get("prod_df", pd.DataFrame())
+    pname = st.session_state.get("prod_name", "")
 
     if df.empty or not pname:
         return
 
-    for col in ["rating","sentiment_score","suspicion_score","word_count"]:
+    for col in ["rating", "sentiment_score", "suspicion_score", "word_count"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
 
@@ -1557,62 +1597,78 @@ def page_products():
     from src.analysis.themes       import get_sentiment_keywords, get_aspect_sentiment, get_cluster_summary
     from src.visualization.charts  import (
         sentiment_donut, rating_distribution, keyword_bars,
-        aspect_radar, topic_cluster_chart, sentiment_gauge, review_length_chart
+        aspect_radar, topic_cluster_chart, sentiment_gauge, review_length_chart,
     )
 
     stats = get_summary_stats(df)
     trust = get_trust_score(df)
+    plat_display = st.session_state.get("prod_platform", "")
 
     st.markdown("---")
-    st.markdown(f"### Results: {pname} ({platform})")
+    st.markdown(f"### Results: {pname}{' · ' + plat_display if plat_display else ''}")
 
-    m1,m2,m3,m4,m5 = st.columns(5)
-    m1.metric("Reviews",  f"{stats['total']:,}")
-    m2.metric("Positive", f'{float(stats["pct_positive"]):.1f}%')
-    m3.metric("Negative", f'{float(stats["pct_negative"]):.1f}%')
-    m4.metric("Sentiment",f'{float(stats["avg_compound"]):+.3f}')
-    m5.metric("Trust",    f'{float(trust):.0f}%')
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Reviews",   f"{stats['total']:,}")
+    m2.metric("Positive",  f'{float(stats["pct_positive"]):.1f}%')
+    m3.metric("Negative",  f'{float(stats["pct_negative"]):.1f}%')
+    m4.metric("Sentiment", f'{float(stats["avg_compound"]):+.3f}')
+    m5.metric("Trust",     f'{float(trust):.0f}%')
 
-    c1,c2 = st.columns(2)
-    with c1: st.plotly_chart(sentiment_donut(df),  width='stretch')
-    with c2: st.plotly_chart(sentiment_gauge(float(stats["avg_compound"])), width='stretch')
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(sentiment_donut(df), use_container_width=True)
+        st.caption("Split of reviews by sentiment.")
+    with c2:
+        st.plotly_chart(sentiment_gauge(float(stats["avg_compound"])), use_container_width=True)
+        st.caption("Overall mood: +1 = very positive, -1 = very negative.")
 
     if "rating" in df.columns and df["rating"].notna().any():
-        c3,c4 = st.columns(2)
-        with c3: st.plotly_chart(rating_distribution(df), width='stretch')
-        with c4: st.plotly_chart(review_length_chart(df), width='stretch')
+        c3, c4 = st.columns(2)
+        with c3:
+            st.plotly_chart(rating_distribution(df), use_container_width=True)
+            st.caption("How star ratings are distributed.")
+        with c4:
+            st.plotly_chart(review_length_chart(df), use_container_width=True)
+            st.caption("Longer negative reviews usually describe specific problems.")
 
     with st.spinner("Extracting keywords…"):
         kw = get_sentiment_keywords(df, top_n=10)
-    kc1,kc2 = st.columns(2)
-    with kc1: st.plotly_chart(keyword_bars(kw.get("positive",[]),color="#10B981",title="Praised aspects"), width='stretch')
-    with kc2: st.plotly_chart(keyword_bars(kw.get("negative",[]),color="#EF4444",title="Criticised aspects"), width='stretch')
+    kc1, kc2 = st.columns(2)
+    with kc1:
+        st.plotly_chart(keyword_bars(kw.get("positive", []), color="#10B981", title="What Customers Praise"), use_container_width=True)
+    with kc2:
+        st.plotly_chart(keyword_bars(kw.get("negative", []), color="#EF4444", title="What Customers Criticise"), use_container_width=True)
 
     asp = get_aspect_sentiment(df)
     if not asp.empty:
-        st.plotly_chart(aspect_radar(asp), width='stretch')
+        st.plotly_chart(aspect_radar(asp), use_container_width=True)
+        st.caption("Radar shows sentiment across 6 quality dimensions.")
 
     cdf = get_cluster_summary(df)
     if not cdf.empty:
-        st.plotly_chart(topic_cluster_chart(cdf), width='stretch')
+        st.plotly_chart(topic_cluster_chart(cdf), use_container_width=True)
+        st.caption("AI grouped reviews into topics automatically.")
 
     # PDF export
     st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
     kw_pdf  = get_sentiment_keywords(df, top_n=8)
     asp_pdf = get_aspect_sentiment(df)
     if st.button("📄 Export PDF Report", key="prod_pdf", use_container_width=True):
-        from src.exports.pdf_report import generate_pdf_report
-        pdf = generate_pdf_report(
-            pname, stats, {}, float(trust), asp_pdf,
-            kw_pdf.get("positive",[]), kw_pdf.get("negative",[]), "product")
-        st.download_button("⬇️ Download PDF",
-            data=pdf, file_name=f"{pname.replace(' ','_')}_report.pdf",
-            mime="application/pdf")
+        with st.spinner("Generating PDF…"):
+            try:
+                from src.exports.pdf_report import generate_pdf_report
+                pdf = generate_pdf_report(
+                    pname, stats, {}, float(trust), asp_pdf,
+                    kw_pdf.get("positive", []), kw_pdf.get("negative", []), "product")
+                st.download_button("⬇️ Download PDF", data=pdf,
+                    file_name=f"{pname.replace(' ','_')}_report.pdf",
+                    mime="application/pdf", key="prod_pdf_dl")
+            except Exception as e:
+                st.error(f"PDF error: {e}")
 
     st.download_button("⬇️ Export Reviews CSV",
         df.to_csv(index=False).encode(),
-        f"{pname.replace(' ','_')}_reviews.csv","text/csv")
-
+        f"{pname.replace(' ','_')}_reviews.csv", "text/csv", key="prod_csv")
 
 
 
@@ -1630,8 +1686,9 @@ def _run_product_analysis(df_raw: pd.DataFrame, product_name: str, platform: str
         get_db().save_product_analysis(uid, product_name, platform, product_url, df)
     except Exception:
         pass
-    st.session_state["prod_df"]   = df
-    st.session_state["prod_name"] = product_name
+    st.session_state["prod_df"]       = df
+    st.session_state["prod_name"]     = product_name
+    st.session_state["prod_platform"] = platform
     st.success(f"Analysed **{len(df)} reviews** for **{product_name}**")
 
 
