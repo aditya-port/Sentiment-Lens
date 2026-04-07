@@ -982,6 +982,104 @@ def _groq_summary(name, stats, kw, aspect_df) -> str | None:
     )}], max_tokens=600)
 
 
+def _groq_product_judgement(product_name: str, platform: str, product_url: str,
+                            stats: dict, kw: dict, aspect_df: pd.DataFrame,
+                            reviews: pd.DataFrame) -> dict:
+    """
+    Ask Groq for product-level judgement + drawbacks.
+    Returns a dict with stable keys, even on parse failure.
+    """
+    fallback = {
+        "verdict": "Needs review",
+        "confidence": "medium",
+        "summary": "AI analysis unavailable. Please review sentiment and drawback keywords below.",
+        "drawbacks": [k for k, _ in kw.get("negative", [])[:8]],
+        "highlights": [k for k, _ in kw.get("positive", [])[:6]],
+        "recommendations": [],
+    }
+    if not _groq_key():
+        return fallback
+
+    aspect_bits = []
+    if aspect_df is not None and not aspect_df.empty:
+        for _, r in aspect_df.head(6).iterrows():
+            aspect_bits.append(
+                f"{r.get('aspect','?')}: {float(r.get('pct_positive',0)):.0f}% positive "
+                f"({r.get('mentions', 0)} mentions)"
+            )
+
+    sample_reviews = []
+    if reviews is not None and not reviews.empty:
+        cols = [c for c in ["review_text", "sentiment_label", "rating"] if c in reviews.columns]
+        for _, row in reviews[cols].head(24).iterrows():
+            txt = str(row.get("review_text", "")).strip()
+            if not txt:
+                continue
+            txt = txt[:280]
+            sample_reviews.append(
+                f"- ({row.get('sentiment_label','?')}, rating={row.get('rating','n/a')}): {txt}"
+            )
+
+    prompt = (
+        "You are a strict product review analyst. Use only the supplied data.\n"
+        "Return JSON ONLY with keys:\n"
+        "verdict (Buy | Consider | Avoid), confidence (high|medium|low), summary, "
+        "drawbacks (array of 5-10 concise drawback keywords), "
+        "highlights (array of 4-8 positive keywords), "
+        "recommendations (array of 3-5 practical suggestions for a buyer).\n\n"
+        f"Product: {product_name}\n"
+        f"Platform: {platform}\n"
+        f"URL: {product_url or 'n/a'}\n"
+        f"Total reviews analysed: {stats.get('total', 0)}\n"
+        f"Average sentiment score: {float(stats.get('avg_compound', 0)):+.3f}\n"
+        f"Positive: {float(stats.get('pct_positive', 0)):.1f}%\n"
+        f"Negative: {float(stats.get('pct_negative', 0)):.1f}%\n"
+        f"Average rating: {float(stats.get('avg_rating', 0)):.2f}/5\n"
+        f"Top positive keywords: {', '.join([k for k, _ in kw.get('positive', [])[:10]]) or 'n/a'}\n"
+        f"Top negative keywords: {', '.join([k for k, _ in kw.get('negative', [])[:12]]) or 'n/a'}\n"
+        f"Aspect breakdown: {'; '.join(aspect_bits) if aspect_bits else 'n/a'}\n\n"
+        "Sample reviews:\n"
+        f"{chr(10).join(sample_reviews[:24]) if sample_reviews else '- n/a'}\n"
+    )
+
+    raw = _groq([{"role": "user", "content": prompt}], max_tokens=650)
+    if not raw or raw.startswith("[Error:"):
+        return fallback
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        return {**fallback, "summary": cleaned[:900], "recommendations": []}
+
+    verdict = str(data.get("verdict", "Consider")).strip().title()
+    confidence = str(data.get("confidence", "medium")).strip().lower()
+    summary = str(data.get("summary", "")).strip() or fallback["summary"]
+    drawbacks = data.get("drawbacks", [])
+    highlights = data.get("highlights", [])
+    recs = data.get("recommendations", [])
+
+    if not isinstance(drawbacks, list):
+        drawbacks = []
+    if not isinstance(highlights, list):
+        highlights = []
+    if not isinstance(recs, list):
+        recs = []
+
+    return {
+        "verdict": verdict if verdict in {"Buy", "Consider", "Avoid"} else "Consider",
+        "confidence": confidence if confidence in {"high", "medium", "low"} else "medium",
+        "summary": summary[:1600],
+        "drawbacks": [str(x).strip() for x in drawbacks if str(x).strip()][:10] or fallback["drawbacks"],
+        "highlights": [str(x).strip() for x in highlights if str(x).strip()][:8],
+        "recommendations": [str(x).strip() for x in recs if str(x).strip()][:5],
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # AUTO INSIGHTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1496,6 +1594,7 @@ def page_products():
                             st.session_state["auto_product_name"] = pname
                             st.session_state["auto_platform"]     = auto_plat
                             st.session_state["auto_product_url"]  = auto_url.strip()
+                            st.session_state["auto_fetch_method"] = method
                     except Exception as e:
                         st.error(f"Fetch error: {e}")
                         st.info("Try pasting the reviews manually in the other tab.")
@@ -1504,6 +1603,8 @@ def page_products():
         scraped = st.session_state.get("auto_scraped_df")
         if scraped is not None and not scraped.empty:
             st.markdown(f"**{len(scraped)} reviews ready** — click below to analyse.")
+            if st.session_state.get("auto_fetch_method"):
+                st.caption(f"Fetch method: `{st.session_state.get('auto_fetch_method')}`")
             if scraped is not None and "review_text" in scraped.columns:
                 with st.expander("Preview fetched reviews"):
                     st.dataframe(scraped[["review_text"]].head(10), use_container_width=True)
@@ -1603,9 +1704,12 @@ def page_products():
     stats = get_summary_stats(df)
     trust = get_trust_score(df)
     plat_display = st.session_state.get("prod_platform", "")
+    product_url = st.session_state.get("prod_url", "")
 
     st.markdown("---")
     st.markdown(f"### Results: {pname}{' · ' + plat_display if plat_display else ''}")
+    if product_url:
+        st.caption(f"Source URL: {product_url}")
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Reviews",   f"{stats['total']:,}")
@@ -1649,6 +1753,62 @@ def page_products():
         st.plotly_chart(topic_cluster_chart(cdf), use_container_width=True)
         st.caption("AI grouped reviews into topics automatically.")
 
+    # AI product judgement and drawback keywords
+    st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
+    st.markdown("#### 🤖 AI Product Verdict")
+    if not _groq_key():
+        st.markdown(
+            '<div class="sl-info">Add <code>GROK_KEY</code> to .env to enable AI product judgement.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        pid = hashlib.md5(f"{pname}|{plat_display}|{len(df)}|{float(stats.get('avg_compound',0)):.4f}".encode()).hexdigest()[:12]
+        btn_key = f"prod_ai_btn_{pid}"
+        cache_key = f"prod_ai_cache_{pid}"
+        if st.button("Generate AI Product Judgement", key=btn_key, use_container_width=True):
+            with st.spinner("Asking Groq to judge the product based on fetched reviews…"):
+                st.session_state[cache_key] = _groq_product_judgement(
+                    product_name=pname,
+                    platform=plat_display or "Other",
+                    product_url=product_url,
+                    stats=stats,
+                    kw=kw,
+                    aspect_df=asp,
+                    reviews=df,
+                )
+
+        if cache_key in st.session_state:
+            ai = st.session_state[cache_key]
+            vc1, vc2 = st.columns([1, 2])
+            with vc1:
+                st.metric("Verdict", ai.get("verdict", "Consider"))
+                st.metric("Confidence", ai.get("confidence", "medium").title())
+            with vc2:
+                st.markdown(f"**Summary:** {ai.get('summary', '')}")
+
+            drawbacks = ai.get("drawbacks", []) or [k for k, _ in kw.get("negative", [])[:8]]
+            highlights = ai.get("highlights", []) or [k for k, _ in kw.get("positive", [])[:6]]
+            recs = ai.get("recommendations", [])
+
+            d1, d2 = st.columns(2)
+            with d1:
+                st.markdown("**Major Drawback Keywords**")
+                if drawbacks:
+                    st.write(", ".join(drawbacks))
+                else:
+                    st.write("No major drawbacks detected.")
+            with d2:
+                st.markdown("**Top Positive Keywords**")
+                if highlights:
+                    st.write(", ".join(highlights))
+                else:
+                    st.write("No clear highlights detected.")
+
+            if recs:
+                st.markdown("**Buyer Recommendations**")
+                for idx, item in enumerate(recs, 1):
+                    st.markdown(f"{idx}. {item}")
+
     # PDF export
     st.markdown('<div class="sl-divider"></div>', unsafe_allow_html=True)
     kw_pdf  = get_sentiment_keywords(df, top_n=8)
@@ -1689,6 +1849,7 @@ def _run_product_analysis(df_raw: pd.DataFrame, product_name: str, platform: str
     st.session_state["prod_df"]       = df
     st.session_state["prod_name"]     = product_name
     st.session_state["prod_platform"] = platform
+    st.session_state["prod_url"]      = product_url
     st.success(f"Analysed **{len(df)} reviews** for **{product_name}**")
 
 
