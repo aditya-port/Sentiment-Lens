@@ -31,15 +31,13 @@ Update it whenever architecture, core flows, or key decisions change.
 
 ## Product Flow (Current)
 - UI section: `page_products()` in `app.py`.
-- Auto-fetch path:
-  1. Collect URL/name/platform/max
-  2. Call `src.ingestion.product_scraper.scrape_product_reviews(...)`
-  3. Show preview
-  4. Run `_run_product_analysis(...)`
-- Manual paste path:
-  1. Validate via `src.ingestion.product_loader.validate_paste(...)`
-  2. Parse via `parse_pasted_reviews(...)`
-  3. Run `_run_product_analysis(...)`
+- URL-only auto-fetch path:
+  1. Collect URL + max reviews
+  2. Auto-detect platform/product metadata via `infer_product_metadata(...)`
+  3. Fetch reviews via `scrape_product_reviews(...)`
+  4. Show preview
+  5. Run `_run_product_analysis(...)`
+- Manual paste path: removed from Products page UI.
 
 ## Product Scraper Notes (Current Integrated Version)
 - File: `src/ingestion/product_scraper.py`
@@ -50,7 +48,8 @@ Update it whenever architecture, core flows, or key decisions change.
   4. SerpApi search snippets fallback
 - Playwright dependency required: `playwright` (in `requirements.txt`)
 - Meesho approach:
-  - Uses guest Edge via CDP on Windows to reduce anti-bot failures.
+  - Uses isolated headless Playwright first (Railway/server-safe).
+  - On local Windows only, optional isolated Edge guest CDP fallback (`SL_EDGE_GUEST_FALLBACK=1`).
   - Clicks `View all reviews`, parses body text pattern, clicks `VIEW MORE`.
 - Flipkart approach:
   - Builds review URL from product page signals.
@@ -95,4 +94,3 @@ Update it whenever architecture, core flows, or key decisions change.
   - `review_text`, `rating`, `date`, `source`
 - If Meesho/Flipkart selectors break, adjust parser first, then UI flow only if needed.
 - Preserve existing DB interfaces unless schema migration is explicitly requested.
-

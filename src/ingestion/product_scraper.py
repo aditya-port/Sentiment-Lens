@@ -13,13 +13,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse, urlunparse
 
 import pandas as pd
 import requests
@@ -36,20 +37,24 @@ def scrape_product_reviews(
     Return (df, method_used). df columns: review_text, rating, date, source.
     """
     max_reviews = max(1, int(max_reviews or 100))
-    target_platform = _detect_platform(url, platform)
+    meta = infer_product_metadata(url=url, platform_hint=platform)
+    if product_name and product_name.strip():
+        meta["product_name"] = product_name.strip()
+    query_name = str(meta.get("product_name", "")).strip()
+    target_platform = str(meta.get("platform_key", "other"))
 
     if url:
         # 1) Browser path first for JS-heavy pages.
         if target_platform in {"flipkart", "meesho"}:
             df, method = _scrape_with_playwright(url, target_platform, max_reviews)
             if not df.empty:
-                return df, method
+                return _attach_metadata(df, meta, url), method
 
         # 2) SerpApi product endpoint (if key available).
         if api_key:
             df, method = _try_serpapi_product(url, product_name, api_key, max_reviews)
             if not df.empty:
-                return df, method
+                return _attach_metadata(df, meta, url), method
 
         # 3) HTTP fallback.
         if target_platform == "amazon":
@@ -61,15 +66,45 @@ def scrape_product_reviews(
         else:
             df, method = _scrape_generic(url, max_reviews)
         if not df.empty:
-            return df, method
+            return _attach_metadata(df, meta, url), method
 
     # 4) Last fallback: web snippets via SerpApi.
-    if api_key and product_name:
-        df, method = _try_serpapi_google_reviews(product_name, platform, api_key, max_reviews)
+    if api_key and query_name and query_name.lower() != "product":
+        df, method = _try_serpapi_google_reviews(query_name, meta.get("platform", platform), api_key, max_reviews)
         if not df.empty:
-            return df, method
+            return _attach_metadata(df, meta, url), method
 
     return pd.DataFrame(), "none"
+
+
+def infer_product_metadata(url: str = "", platform_hint: str = "") -> dict:
+    platform_key = _detect_platform(url, platform_hint)
+    platform = _platform_label(platform_key)
+    product_name = _infer_product_name(url, platform_key)
+    return {
+        "platform_key": platform_key,
+        "platform": platform,
+        "product_name": product_name or "Product",
+    }
+
+
+def _platform_label(platform_key: str) -> str:
+    return {
+        "flipkart": "Flipkart",
+        "meesho": "Meesho",
+        "amazon": "Amazon",
+        "other": "Other",
+    }.get((platform_key or "").lower(), "Other")
+
+
+def _attach_metadata(df: pd.DataFrame, meta: dict, url: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    df.attrs["detected_platform"] = meta.get("platform", "Other")
+    df.attrs["platform_key"] = meta.get("platform_key", "other")
+    df.attrs["detected_product_name"] = meta.get("product_name", "Product")
+    df.attrs["source_url"] = (url or "").strip()
+    return df
 
 
 def _detect_platform(url: str, platform_hint: str) -> str:
@@ -83,6 +118,76 @@ def _detect_platform(url: str, platform_hint: str) -> str:
     if "amazon" in text:
         return "amazon"
     return "other"
+
+
+def _infer_product_name(url: str, platform_key: str) -> str:
+    # 1) Try a lightweight title pull from the page HTML.
+    title = _fetch_title_from_page(url, platform_key)
+    if title:
+        return title
+
+    # 2) URL slug fallback.
+    try:
+        parsed = urlparse(url or "")
+        slug = ""
+        for part in [p for p in parsed.path.split("/") if p]:
+            low = part.lower()
+            if low in {"p", "dp", "gp", "product-reviews"}:
+                continue
+            if re.fullmatch(r"itm[a-z0-9]+", low):
+                continue
+            if re.fullmatch(r"[a-z]{3,}\d{3,}", low):
+                continue
+            if len(part) > len(slug):
+                slug = part
+        slug = unquote(slug).replace("_", " ").replace("-", " ")
+        slug = re.sub(r"\s+", " ", slug).strip()
+        slug = re.sub(r"\b(?:pid|lid|marketplace|ref|tag)\b.*$", "", slug, flags=re.I).strip()
+        return slug[:160] if slug else ""
+    except Exception:
+        return ""
+
+
+def _fetch_title_from_page(url: str, platform_key: str) -> str:
+    if not url:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+        r = requests.get(url, headers=_headers(), timeout=18)
+        if r.status_code >= 400:
+            return ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        candidates = []
+        for sel, attr in [
+            ("meta[property='og:title']", "content"),
+            ("meta[name='twitter:title']", "content"),
+            ("meta[name='title']", "content"),
+        ]:
+            el = soup.select_one(sel)
+            if el and el.get(attr):
+                candidates.append(str(el.get(attr)))
+        if soup.title and soup.title.get_text(strip=True):
+            candidates.append(soup.title.get_text(" ", strip=True))
+        for cand in candidates:
+            cleaned = _clean_product_title(cand, platform_key)
+            if cleaned and len(cleaned) >= 5:
+                return cleaned[:180]
+    except Exception:
+        return ""
+    return ""
+
+
+def _clean_product_title(title: str, platform_key: str) -> str:
+    t = _normalize_spaces(title)
+    if not t:
+        return ""
+    t = re.sub(r"\s*[\|\-–]\s*(flipkart|meesho|amazon(?:\.in)?).*$", "", t, flags=re.I)
+    t = re.sub(r"^\s*(amazon(?:\.in)?\s*[:\-]\s*)", "", t, flags=re.I)
+    t = re.sub(r"\s*buy .*?(online|at best price).*?$", "", t, flags=re.I)
+    t = re.sub(r"\s{2,}", " ", t).strip(" -|:")
+    if platform_key == "meesho":
+        t = re.sub(r"\s*-\s*comfort and style.*$", "", t, flags=re.I)
+    return t
 
 
 def _headers() -> dict:
@@ -357,78 +462,49 @@ def _scrape_with_playwright(url: str, platform: str, max_reviews: int) -> tuple[
     browser = None
     context = None
     page = None
-    edge_proc = None
-    attached = False
+    blocked = False
 
     try:
-        # For Meesho on Windows, a guest Edge+CDP path is often more reliable.
-        if platform == "meesho" and os.name == "nt":
-            edge_exe = _find_edge_exe()
-            if edge_exe:
-                port = _find_free_port()
-                user_dir = Path(tempfile.gettempdir()) / f"sentimentlens_meesho_{port}"
-                user_dir.mkdir(parents=True, exist_ok=True)
-                cmd = [
-                    edge_exe,
-                    f"--remote-debugging-port={port}",
-                    f"--user-data-dir={user_dir}",
-                    "--guest",
-                    "--disable-extensions",
-                    "--disable-sync",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    url,
-                ]
-                edge_proc = subprocess.Popen(cmd)
-                deadline = time.time() + 30
-                while time.time() < deadline:
-                    try:
-                        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-                        attached = True
-                        break
-                    except Exception:
-                        time.sleep(1.0)
-                if browser:
-                    context = browser.contexts[0] if browser.contexts else browser.new_context()
-                    page = _pick_page_by_url(context.pages, url)
-                    if page is None:
-                        page = context.new_page()
-                        page.goto(url, timeout=60_000, wait_until="domcontentloaded")
-
-        if page is None:
-            browser = pw.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                ),
-                locale="en-IN",
-                viewport={"width": 1366, "height": 768},
-                extra_http_headers={"Accept-Language": "en-IN,en;q=0.9"},
-            )
-            page = context.new_page()
-            page.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-                "Object.defineProperty(navigator,'languages',{get:()=>['en-IN','en-US','en']});"
-            )
-            page.goto(url, timeout=60_000, wait_until="domcontentloaded")
+        # Railway/server-safe path: isolated Chromium context only, no personal profile.
+        headless = os.getenv("SL_PLAYWRIGHT_HEADLESS", "1").strip() != "0"
+        browser = pw.chromium.launch(
+            headless=headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+            ],
+        )
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="en-IN",
+            viewport={"width": 1366, "height": 768},
+            extra_http_headers={"Accept-Language": "en-IN,en;q=0.9"},
+        )
+        page = context.new_page()
+        page.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "Object.defineProperty(navigator,'languages',{get:()=>['en-IN','en-US','en']});"
+        )
+        page.goto(url, timeout=60_000, wait_until="domcontentloaded")
 
         page.wait_for_timeout(3000)
         text = page.locator("body").inner_text(timeout=15000)
-        blocked = "access denied" in text.lower() or "you don't have permission" in text.lower()
-        if blocked and not attached:
-            return pd.DataFrame(), ""
-
-        if platform == "meesho":
-            rows = _extract_meesho_playwright(page, max_reviews)
-            df = _records_to_df(rows, "meesho_playwright", max_reviews)
-            if not df.empty:
-                return df, "meesho_playwright"
-        elif platform == "flipkart":
-            rows = _extract_flipkart_playwright(page, url, max_reviews)
-            df = _records_to_df(rows, "flipkart_playwright", max_reviews)
-            if not df.empty:
-                return df, "flipkart_playwright"
+        blocked = _is_access_blocked(text)
+        if not blocked:
+            if platform == "meesho":
+                rows = _extract_meesho_playwright(page, max_reviews)
+                df = _records_to_df(rows, "meesho_playwright", max_reviews)
+                if not df.empty:
+                    return df, "meesho_playwright"
+            elif platform == "flipkart":
+                rows = _extract_flipkart_playwright(page, url, max_reviews)
+                df = _records_to_df(rows, "flipkart_playwright", max_reviews)
+                if not df.empty:
+                    return df, "flipkart_playwright"
     except Exception:
         pass
     finally:
@@ -446,6 +522,114 @@ def _scrape_with_playwright(url: str, platform: str, max_reviews: int) -> tuple[
             pw.stop()
         except Exception:
             pass
+
+    # Local-only fallback for Meesho: isolated temporary Edge guest session.
+    # This keeps personal profile/extensions out and is disabled on Railway/Linux.
+    if (
+        platform == "meesho"
+        and os.name == "nt"
+        and os.getenv("SL_EDGE_GUEST_FALLBACK", "1").strip() != "0"
+    ):
+        return _scrape_meesho_edge_guest(url, max_reviews)
+
+    return pd.DataFrame(), ""
+
+
+def _is_access_blocked(text: str) -> bool:
+    t = (text or "").lower()
+    return any(
+        s in t for s in [
+            "access denied",
+            "you don't have permission",
+            "request blocked",
+            "temporarily blocked",
+            "captcha",
+            "forbidden",
+        ]
+    )
+
+
+def _scrape_meesho_edge_guest(url: str, max_reviews: int) -> tuple[pd.DataFrame, str]:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return pd.DataFrame(), ""
+
+    edge_exe = _find_edge_exe()
+    if not edge_exe:
+        return pd.DataFrame(), ""
+
+    port = _find_free_port()
+    user_dir = Path(tempfile.gettempdir()) / f"sentimentlens_edge_guest_{port}"
+    edge_proc = None
+    pw = None
+    browser = None
+    context = None
+    page = None
+
+    try:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            edge_exe,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_dir}",
+            "--guest",
+            "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-sync",
+            "--disable-default-apps",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--inprivate",
+            url,
+        ]
+        edge_proc = subprocess.Popen(cmd)
+        pw = sync_playwright().start()
+
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+                break
+            except Exception:
+                time.sleep(1.0)
+
+        if not browser:
+            return pd.DataFrame(), ""
+
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = _pick_page_by_url(context.pages, url)
+        if page is None:
+            page = context.new_page()
+            page.goto(url, timeout=60_000, wait_until="domcontentloaded")
+
+        page.wait_for_timeout(3000)
+        txt = page.locator("body").inner_text(timeout=15000)
+        if _is_access_blocked(txt):
+            return pd.DataFrame(), ""
+
+        rows = _extract_meesho_playwright(page, max_reviews)
+        df = _records_to_df(rows, "meesho_edge_guest", max_reviews)
+        if not df.empty:
+            return df, "meesho_edge_guest"
+    except Exception:
+        pass
+    finally:
+        try:
+            if context:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        try:
+            if pw:
+                pw.stop()
+        except Exception:
+            pass
         if edge_proc:
             try:
                 edge_proc.terminate()
@@ -455,6 +639,10 @@ def _scrape_with_playwright(url: str, platform: str, max_reviews: int) -> tuple[
                     edge_proc.kill()
                 except Exception:
                     pass
+        try:
+            shutil.rmtree(user_dir, ignore_errors=True)
+        except Exception:
+            pass
     return pd.DataFrame(), ""
 
 

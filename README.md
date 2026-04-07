@@ -22,7 +22,7 @@ Paste a place name → get sentiment scores, topic clusters, fake review detecti
 | 🔖 **Bookmarks** | Save places for quick re-analysis |
 | 📄 **PDF Export** | One-page summary report per analysis |
 | 🆚 **Multi-Place Compare** | Side-by-side radar + metrics for any analyzed places |
-| 📦 **Product Reviews** | Paste reviews from Amazon, Flipkart, Meesho — any platform |
+| 📦 **Product Reviews** | Auto-fetch reviews from Amazon, Flipkart, Meesho product URLs |
 | 👤 **User Accounts** | Email/password auth via Supabase (free + pro plans) |
 
 ---
@@ -63,6 +63,7 @@ cd sentiment-lens
 
 ```bash
 pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
 ### 3. Set up Supabase database
